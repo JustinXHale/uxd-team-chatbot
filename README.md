@@ -2,7 +2,7 @@
 
 This is a team knowledge project for Red Hat's UXD organization. It allows contributors to add Markdown bios and makes them searchable using semantic search.
 
-## 👥 Contribute Your Bio
+## Contribute Your Bio
 
 To add yourself to the chatbot:
 
