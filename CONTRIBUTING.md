@@ -28,11 +28,15 @@ team: Your Team Name
 email: you@email.com
 github: yourgithubhandle
 interests:
-  - UX
-  - Gardening
-  - Dungeons & Dragons
-bio: >
+  - interest 1
+  - interest 2
+  - interest 100 if you want
+bio: 
   Write a few sentences about yourself. This is used by the chatbot!
+fun_facts:
+  - fact 1
+  - fact 2
+  - fact 100 if you want
 ---
 ```
 Feel free to tag @justinxhale in your PR if you get stuck.
