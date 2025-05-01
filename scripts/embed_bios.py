@@ -3,10 +3,9 @@ import yaml
 import markdown
 import re
 import uuid
-import argparse
 import json
+import argparse
 from pathlib import Path
-from datetime import datetime
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import PointStruct, VectorParams, Distance
@@ -27,26 +26,23 @@ args = parser.parse_args()
 
 # Optional: Reset the collection
 if args.reset:
-    print("⚠️ Resetting collection:", collection_name)
+    print(f"⚠️ Resetting collection: {collection_name}")
     client.delete_collection(collection_name=collection_name)
     client.create_collection(
         collection_name=collection_name,
         vectors_config=VectorParams(size=384, distance=Distance.COSINE),
     )
+    try:
+        os.remove(".embed_cache.json")
+        print("🗑️ Removed .embed_cache.json to rescan all bios.")
+    except FileNotFoundError:
+        print("ℹ️ No .embed_cache.json found. All bios will be embedded fresh.")
 else:
     if not client.collection_exists(collection_name=collection_name):
         client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(size=384, distance=Distance.COSINE),
         )
-
-# Load cache of last embed times
-cache_path = Path(".cache.json")
-if cache_path.exists():
-    with open(cache_path, "r") as f:
-        cache = json.load(f)
-else:
-    cache = {}
 
 # Markdown to plain text
 def markdown_to_text(md):
@@ -56,7 +52,7 @@ def markdown_to_text(md):
 
 # Load and parse markdown
 def load_bio_markdown(file_path):
-    with open(file_path, "r") as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
 
     if content.startswith("---"):
@@ -65,23 +61,37 @@ def load_bio_markdown(file_path):
     else:
         raise ValueError("Markdown file missing frontmatter")
 
-    return data, markdown_to_text(body)
+    return data, markdown_to_text(body), content  # returning full raw content too
 
-# Loop through all bio.md files
+# Load embed cache or prepare for full embedding
+embed_cache = {}
+force_all = False
+embed_cache_path = Path(".embed_cache.json")
+
+if embed_cache_path.exists():
+    with open(embed_cache_path) as f:
+        embed_cache = json.load(f)
+else:
+    force_all = True
+    print("📂 No .embed_cache.json found — embedding all bios.")
+
+# Loop through all markdown files in bios/
 bios_dir = Path("bios")
-updated = 0
+updated_cache = {}
+embedded_count = 0
 
-for md_file in bios_dir.glob("*/bio.md"):
-    modified_time = md_file.stat().st_mtime
-    last_cached = cache.get(str(md_file), 0)
-
-    if modified_time <= last_cached:
-        continue  # Skip unchanged files
-
+for md_file in bios_dir.glob("**/bio.md"):
     print(f"\n📄 Processing {md_file}...")
 
+    # Check file modification time
+    last_modified = os.path.getmtime(md_file)
+    if not force_all and str(md_file) in embed_cache:
+        if embed_cache[str(md_file)] == last_modified:
+            print(f"⏩ Skipping {md_file.name}, unchanged.")
+            continue
+
     try:
-        data, text = load_bio_markdown(md_file)
+        data, text, raw_md = load_bio_markdown(md_file)
         embedding_text = f"{data['title']} {data['bio']}"
         embedding = model.encode(embedding_text).tolist()
 
@@ -89,26 +99,31 @@ for md_file in bios_dir.glob("*/bio.md"):
             id=str(uuid.uuid4()),
             vector=embedding,
             payload={
-                "name": data["name"],
-                "title": data["title"],
-                "location": data["location"],
-                "bio": data["bio"]
+                "name": data.get("name", ""),
+                "title": data.get("title", ""),
+                "start_date": data.get("start date", ""),
+                "location": data.get("location", ""),
+                "team": data.get("team", ""),
+                "email": data.get("email", ""),
+                "github": data.get("github", ""),
+                "interests": data.get("interests", []),
+                "fun_facts": data.get("fun_facts", []),
+                "bio": data.get("bio", ""),
+                "image": data.get("image", ""),
+                "raw_md": raw_md  # <- full markdown included
             }
         )
 
         client.upsert(collection_name=collection_name, points=[point])
-        cache[str(md_file)] = modified_time
-        updated += 1
+        updated_cache[str(md_file)] = last_modified
+        embedded_count += 1
         print(f"✅ Embedded and stored bio for {data['name']}")
 
     except Exception as e:
-        print(f"❌ Failed to process {md_file}: {e}")
+        print(f"❌ Failed to process {md_file.name}: {e}")
 
 # Save updated cache
-with open(cache_path, "w") as f:
-    json.dump(cache, f)
+with open(embed_cache_path, "w") as f:
+    json.dump(updated_cache, f)
 
-if updated == 0:
-    print("\n📦 No new or updated bios to embed.")
-else:
-    print(f"\n🔄 Done. {updated} bio(s) embedded.")
+print(f"\n🔄 Done. {embedded_count} bio(s) embedded.")
